@@ -65,7 +65,8 @@ app = FastAPI(
 
 origins = [
     "http://localhost",
-    "http://localhost:3000", 
+    "http://localhost:3000",
+    "https://karim-speech-frontend.onrender.com", 
 ]
 
 app.add_middleware(
