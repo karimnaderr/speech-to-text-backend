@@ -1,35 +1,15 @@
 # main.py
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 import assemblyai as aai
 import os
-from dotenv import load_dotenv # Make sure this is imported
+from dotenv import load_dotenv
 from typing import Optional, List
 from datetime import datetime
 from sqlmodel import Field, SQLModel, create_engine, Session, select
+from pydantic import BaseModel 
+from textblob import TextBlob 
 
-
-app = FastAPI(
-    title="Speech-to-Text Microservice",
-    description="A FastAPI service to transcribe audio and manage transcripts.",
-    version="0.1.0"
-)
-origins = [
-    "http://localhost",
-    "http://localhost:3000", # Your React app's address
-    # Add your hosted frontend URL here when you deploy!
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"], # Allows all methods (GET, POST, etc.)
-    allow_headers=["*"], # Allows all headers
-)
-# --- Configuration ---
-# It's crucial for load_dotenv() to be called early to load your .env file
 load_dotenv()
 
 ASSEMBLYAI_API_KEY = os.getenv("ASSEMBLYAI_API_KEY")
@@ -39,53 +19,83 @@ aai.settings.api_key = ASSEMBLYAI_API_KEY
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
-    # This error should halt startup if DATABASE_URL is missing
     raise ValueError("DATABASE_URL environment variable not set. Please check your .env file and ensure PostgreSQL is running.")
 
-# Create the SQLAlchemy engine here
-# echo=True is very helpful for debugging SQL issues by printing queries
+
 engine = create_engine(DATABASE_URL, echo=True)
 
-# --- SQLModel Database Table Definition ---
+
 class Transcript(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     filename: str
     transcript_text: str
     status: str
+    sentiment: Optional[str] = None 
     created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
 
-# --- Pydantic Models for API Response ---
-class TranscriptResponse(BaseModel):
+
+class TranscriptResponse(BaseModel): 
     text: str
     status: str
-    transcript_id: int # Ensure this is present and correct type
+    transcript_id: int
+    sentiment: Optional[str] = None 
 
-# --- Database Initialization Function ---
+
 def create_db_and_tables():
     """Attempts to create database tables based on SQLModel metadata."""
-    print("Attempting to create/verify database tables...") # Added for clarity
+    print("Attempting to create/verify database tables...")
     try:
         SQLModel.metadata.create_all(engine)
         print("Database tables created/checked successfully.")
     except Exception as e:
         print(f"ERROR: Failed to create/verify database tables: {e}")
-        # Optionally re-raise the exception if you want startup to fail
-        # raise
 
-# --- Dependency for database session ---
+
 def get_session():
     """Yields a database session, ensuring it's closed afterwards."""
     with Session(engine) as session:
         yield session
 
+app = FastAPI(
+    title="Speech-to-Text Microservice",
+    description="A FastAPI service to transcribe audio and manage transcripts.",
+    version="0.1.0"
+)
 
-# --- Event Handlers (run on app startup) ---
-@app.on_event("startup") # This decorator registers the function to run at startup
+
+origins = [
+    "http://localhost",
+    "http://localhost:3000", 
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"], 
+    allow_headers=["*"], 
+)
+
+
+@app.on_event("startup")
 def on_startup():
     """Handler function to run when the application starts."""
-    create_db_and_tables() # Call the function to create/verify tables
+    create_db_and_tables()
 
-# --- Endpoints ---
+
+def analyze_sentiment(text: str) -> str:
+    """Analyzes the sentiment of a given text."""
+    if not text:
+        return "N/A"
+    blob = TextBlob(text)
+    if blob.polarity > 0.1: 
+        return "Positive"
+    elif blob.polarity < -0.1:
+        return "Negative"
+    else:
+        return "Neutral"
+
+
 @app.get("/")
 async def read_root():
     return {"message": "Welcome to the Speech-to-Text Microservice!"}
@@ -100,6 +110,7 @@ async def transcribe_audio(audio_file: UploadFile = File(...), session: Session 
 
     file_location = f"temp_{audio_file.filename}"
     transcript_id = None
+    analyzed_sentiment = None 
 
     try:
         with open(file_location, "wb+") as file_object:
@@ -109,7 +120,7 @@ async def transcribe_audio(audio_file: UploadFile = File(...), session: Session 
         config = aai.TranscriptionConfig(language_code="en_us")
         transcript_result = transcriber.transcribe(file_location, config)
 
-        os.remove(file_location) # Clean up the temporary file
+        os.remove(file_location) 
 
         transcript_text_to_save = ""
         status_to_save = ""
@@ -117,30 +128,33 @@ async def transcribe_audio(audio_file: UploadFile = File(...), session: Session 
         if transcript_result.status == aai.TranscriptStatus.completed:
             transcript_text_to_save = transcript_result.text
             status_to_save = "completed"
+            analyzed_sentiment = analyze_sentiment(transcript_text_to_save) 
         else:
             transcript_text_to_save = transcript_result.error or "Transcription failed"
             status_to_save = transcript_result.status.value if transcript_result.status else "failed"
+            analyzed_sentiment = "N/A"
 
-        # Create and save transcript to database
+        
         db_transcript = Transcript(
             filename=audio_file.filename,
             transcript_text=transcript_text_to_save,
-            status=status_to_save
+            status=status_to_save,
+            sentiment=analyzed_sentiment 
         )
         session.add(db_transcript)
         session.commit()
-        session.refresh(db_transcript) # IMPORTANT: Populates db_transcript.id from DB
+        session.refresh(db_transcript)
         transcript_id = db_transcript.id
 
-        # Debug prints:
-        print(f"DEBUG: Saved transcript with ID: {transcript_id}")
+        print(f"DEBUG: Saved transcript with ID: {transcript_id}, Sentiment: {analyzed_sentiment}")
         print(f"DEBUG: Transcript content: {transcript_text_to_save}")
 
         if transcript_result.status == aai.TranscriptStatus.completed:
             return TranscriptResponse(
                 text=transcript_text_to_save,
                 status="completed",
-                transcript_id=transcript_id
+                transcript_id=transcript_id,
+                sentiment=analyzed_sentiment 
             )
         else:
             raise HTTPException(
@@ -150,7 +164,7 @@ async def transcribe_audio(audio_file: UploadFile = File(...), session: Session 
     except Exception as e:
         if os.path.exists(file_location):
             os.remove(file_location)
-        print(f"ERROR: An unexpected error occurred during transcription: {e}") # Log the actual error
+        print(f"ERROR: An unexpected error occurred during transcription: {e}")
         raise HTTPException(status_code=500, detail=f"An internal server error occurred: {e}")
 
 @app.get("/transcripts/", response_model=List[Transcript])
@@ -164,7 +178,6 @@ async def get_transcript_by_id(transcript_id: int, session: Session = Depends(ge
     if not transcript:
         raise HTTPException(status_code=404, detail="Transcript not found")
     return transcript
-
 
 if __name__ == "__main__":
     import uvicorn
