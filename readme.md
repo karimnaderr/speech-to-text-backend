@@ -1,4 +1,4 @@
-# [Your Project Name] - Speech-to-Text Backend
+# speech-to-text-karim - Speech-to-Text Backend
 
 ---
 
@@ -32,14 +32,14 @@ Follow these steps to get the backend running on your local machine.
 - Python 3.9+
 - Git
 - PostgreSQL installed and running locally
-- An AssemblyAI API Key (get one from [AssemblyAI](https://www.assemblyai.com/))
+- An AssemblyAI API Key (e7719b57ff774af296a467c100827173)
 
 ### Steps
 
 1.  **Clone the repository:**
 
     ```bash
-    git clone [Your Backend GitHub Repo URL]
+    git clone https://github.com/karimnaderr/speech-to-text-backend
     cd speech-to-text
     ```
 
@@ -47,8 +47,7 @@ Follow these steps to get the backend running on your local machine.
 
     ```bash
     python -m venv venv
-    venv\Scripts\activate  # On Windows
-    # source venv/bin/activate  # On macOS/Linux
+    source venv\Scripts\activate
     ```
 
 3.  **Install dependencies:**
